@@ -11,8 +11,9 @@ import streamlit as st
 from PIL import Image, ImageOps
 
 
-MODEL_PATH = Path("models/mnist_cnn.keras")
+WEIGHTS_PATH = Path("models/mnist_cnn_weights.npz")
 METRICS_PATH = Path("models/metrics.json")
+SAMPLES_PATH = Path("data/mnist_samples.npz")
 DIGIT_LABELS = list(range(10))
 
 
@@ -23,28 +24,87 @@ st.set_page_config(
 )
 
 
+class NumpyMnistCnn:
+    """Small NumPy inference engine for the trained Keras CNN architecture."""
+
+    def __init__(self, weights: dict[str, np.ndarray]) -> None:
+        self.weights = weights
+
+    @staticmethod
+    def _relu(values: np.ndarray) -> np.ndarray:
+        return np.maximum(values, 0)
+
+    @staticmethod
+    def _softmax(values: np.ndarray) -> np.ndarray:
+        shifted = values - np.max(values, axis=-1, keepdims=True)
+        exp_values = np.exp(shifted)
+        return exp_values / np.sum(exp_values, axis=-1, keepdims=True)
+
+    @staticmethod
+    def _conv2d_same(
+        values: np.ndarray,
+        kernel: np.ndarray,
+        bias: np.ndarray,
+    ) -> np.ndarray:
+        padded = np.pad(values, ((0, 0), (1, 1), (1, 1), (0, 0)))
+        windows = np.lib.stride_tricks.sliding_window_view(
+            padded,
+            (kernel.shape[0], kernel.shape[1]),
+            axis=(1, 2),
+        )
+        return np.einsum("bhwcij,ijco->bhwo", windows, kernel) + bias
+
+    @staticmethod
+    def _max_pool2d(values: np.ndarray) -> np.ndarray:
+        batch, height, width, channels = values.shape
+        pooled = values.reshape(batch, height // 2, 2, width // 2, 2, channels)
+        return pooled.max(axis=(2, 4))
+
+    def predict(self, batch: np.ndarray) -> np.ndarray:
+        values = self._relu(
+            self._conv2d_same(
+                batch,
+                self.weights["conv2d_kernel"],
+                self.weights["conv2d_bias"],
+            )
+        )
+        values = self._max_pool2d(values)
+        values = self._relu(
+            self._conv2d_same(
+                values,
+                self.weights["conv2d_1_kernel"],
+                self.weights["conv2d_1_bias"],
+            )
+        )
+        values = self._max_pool2d(values)
+        values = values.reshape(values.shape[0], -1)
+        values = self._relu(values @ self.weights["dense_kernel"] + self.weights["dense_bias"])
+        logits = values @ self.weights["dense_1_kernel"] + self.weights["dense_1_bias"]
+        return self._softmax(logits)
+
+
 @st.cache_resource(show_spinner="Loading trained CNN model...")
 def load_model():
-    if not MODEL_PATH.exists():
+    if not WEIGHTS_PATH.exists():
         return None
 
-    from tensorflow import keras
-
-    return keras.models.load_model(MODEL_PATH)
+    weights_file = np.load(WEIGHTS_PATH)
+    weights = {name: weights_file[name] for name in weights_file.files}
+    return NumpyMnistCnn(weights)
 
 
 @st.cache_data(show_spinner="Loading MNIST demo images...")
 def load_mnist_examples() -> dict[int, Image.Image]:
-    from tensorflow import keras
+    if not SAMPLES_PATH.exists():
+        return {}
 
-    (_, _), (x_test, y_test) = keras.datasets.mnist.load_data()
+    samples = np.load(SAMPLES_PATH)
+    images = samples["images"]
+    labels = samples["labels"]
     examples: dict[int, Image.Image] = {}
-    for image, label in zip(x_test, y_test, strict=False):
+    for image, label in zip(images, labels, strict=False):
         label = int(label)
-        if label not in examples:
-            examples[label] = Image.fromarray(image)
-        if len(examples) == 10:
-            break
+        examples[label] = Image.fromarray(image)
     return examples
 
 
@@ -72,7 +132,7 @@ def prepare_image(image: Image.Image) -> tuple[np.ndarray, Image.Image]:
 
 def predict_digit(model, image: Image.Image) -> tuple[int, float, pd.DataFrame, Image.Image]:
     batch, processed_image = prepare_image(image)
-    probabilities = model.predict(batch, verbose=0)[0]
+    probabilities = model.predict(batch)[0]
     prediction = int(np.argmax(probabilities))
     confidence = float(probabilities[prediction])
     chart_data = pd.DataFrame(
@@ -118,7 +178,10 @@ def show_sidebar(metrics: dict[str, float | int | str]) -> None:
 
         st.divider()
         st.subheader("How to retrain")
-        st.code("python train_model.py --epochs 3", language="bash")
+        st.code(
+            "pip install -r requirements-train.txt\npython train_model.py --epochs 3",
+            language="bash",
+        )
 
 
 def main() -> None:
@@ -129,8 +192,8 @@ def main() -> None:
     model = load_model()
     if model is None:
         st.error(
-            "No trained model was found. Run `python train_model.py --epochs 3` "
-            "to create `models/mnist_cnn.keras`, then restart Streamlit."
+            "No exported model weights were found. Run `python train_model.py --epochs 3` "
+            "to create `models/mnist_cnn_weights.npz`, then restart Streamlit."
         )
         st.stop()
 
@@ -174,21 +237,27 @@ def main() -> None:
     with sample_tab:
         st.subheader("Demo with built-in MNIST test images")
         examples = load_mnist_examples()
-        selected_digit = st.selectbox("Pick a sample digit", DIGIT_LABELS, index=5)
-        sample_image = examples[selected_digit]
-        prediction, confidence, chart_data, processed_image = predict_digit(model, sample_image)
-
-        left, right = st.columns([1, 2])
-        with left:
-            st.image(
-                processed_image.resize((220, 220), Image.Resampling.NEAREST),
-                caption=f"MNIST sample label: {selected_digit}",
-                width=220,
+        if not examples:
+            st.warning("Sample images are missing. Upload a digit image instead.")
+        else:
+            selected_digit = st.selectbox("Pick a sample digit", DIGIT_LABELS, index=5)
+            sample_image = examples[selected_digit]
+            prediction, confidence, chart_data, processed_image = predict_digit(
+                model,
+                sample_image,
             )
-        with right:
-            st.metric("Predicted digit", prediction)
-            st.metric("Confidence", f"{confidence:.2%}")
-            st.bar_chart(chart_data, x="Digit", y="Confidence", height=300)
+
+            left, right = st.columns([1, 2])
+            with left:
+                st.image(
+                    processed_image.resize((220, 220), Image.Resampling.NEAREST),
+                    caption=f"MNIST sample label: {selected_digit}",
+                    width=220,
+                )
+            with right:
+                st.metric("Predicted digit", prediction)
+                st.metric("Confidence", f"{confidence:.2%}")
+                st.bar_chart(chart_data, x="Digit", y="Confidence", height=300)
 
     with explain_tab:
         st.subheader("Deep learning pipeline")

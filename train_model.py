@@ -13,7 +13,9 @@ from tensorflow.keras import layers
 
 
 MODEL_PATH = Path("models/mnist_cnn.keras")
+WEIGHTS_PATH = Path("models/mnist_cnn_weights.npz")
 METRICS_PATH = Path("models/metrics.json")
+SAMPLES_PATH = Path("data/mnist_samples.npz")
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,6 +86,36 @@ def build_model() -> keras.Model:
     return model
 
 
+def export_numpy_weights(model: keras.Model, output_path: Path) -> None:
+    weights: dict[str, np.ndarray] = {}
+    for layer in model.layers:
+        layer_weights = layer.get_weights()
+        if layer_weights:
+            weights[f"{layer.name}_kernel"] = layer_weights[0]
+            weights[f"{layer.name}_bias"] = layer_weights[1]
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(output_path, **weights)
+
+
+def export_sample_images(x_test: np.ndarray, y_test: np.ndarray, output_path: Path) -> None:
+    images = []
+    labels = []
+    x_test_uint8 = (x_test.squeeze(axis=-1) * 255).astype("uint8")
+
+    for digit in range(10):
+        index = int(np.where(y_test == digit)[0][0])
+        images.append(x_test_uint8[index])
+        labels.append(digit)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        output_path,
+        images=np.stack(images),
+        labels=np.array(labels, dtype=np.int64),
+    )
+
+
 def main() -> None:
     args = parse_args()
     np.random.seed(args.seed)
@@ -107,9 +139,13 @@ def main() -> None:
 
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     model.save(MODEL_PATH)
+    export_numpy_weights(model, WEIGHTS_PATH)
+    export_sample_images(x_test, y_test, SAMPLES_PATH)
 
     metrics = {
         "model": str(MODEL_PATH),
+        "deployment_weights": str(WEIGHTS_PATH),
+        "sample_images": str(SAMPLES_PATH),
         "dataset": "MNIST handwritten digits",
         "training_examples": int(x_train.shape[0]),
         "test_examples": int(x_test.shape[0]),
@@ -123,6 +159,8 @@ def main() -> None:
     METRICS_PATH.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
     print(f"Saved model to {MODEL_PATH}")
+    print(f"Saved deployment weights to {WEIGHTS_PATH}")
+    print(f"Saved sample images to {SAMPLES_PATH}")
     print(f"Saved metrics to {METRICS_PATH}")
     print(f"Test accuracy: {test_accuracy:.4f}")
 

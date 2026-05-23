@@ -24,7 +24,9 @@ best choices for a quick, impressive Streamlit deployment:
 +-- app.py              # Streamlit web app
 +-- train_model.py      # CNN training script
 +-- requirements.txt    # Python dependencies
++-- requirements-train.txt # Optional TensorFlow training dependency
 +-- PROJECT_FILE.md     # Course submission summary
++-- data/               # Exported sample digit images for the app
 +-- models/             # Generated trained model and metrics
 ```
 
@@ -43,17 +45,25 @@ best choices for a quick, impressive Streamlit deployment:
    pip install -r requirements.txt
    ```
 
-3. Train the CNN:
-
-   ```bash
-   python train_model.py --epochs 3
-   ```
-
-4. Start the Streamlit app:
+3. Start the Streamlit app:
 
    ```bash
    streamlit run app.py
    ```
+
+The app uses the committed NumPy model weights in
+`models/mnist_cnn_weights.npz`, so Streamlit deployment does not need
+TensorFlow.
+
+## Optional: retrain the CNN
+
+Training requires TensorFlow, which is intentionally kept out of
+`requirements.txt` so Streamlit Cloud can deploy on newer Python versions.
+
+```bash
+pip install -r requirements-train.txt
+python train_model.py --epochs 3
+```
 
 ## Streamlit deployment notes
 
@@ -62,11 +72,12 @@ For Streamlit Community Cloud:
 1. Push this repository to GitHub.
 2. Create a new Streamlit app.
 3. Select `app.py` as the entry point.
-4. Make sure `requirements.txt` and `runtime.txt` are included. The runtime
-   file pins Python 3.11 for TensorFlow compatibility.
-5. If the committed model is unavailable, run `python train_model.py --epochs 3`
-   locally and commit the generated `models/mnist_cnn.keras` and
-   `models/metrics.json` files.
+4. Make sure `requirements.txt` is included.
+
+Important: `requirements.txt` does not include TensorFlow because Streamlit
+Cloud may run Python versions that TensorFlow does not support yet. The app
+loads exported CNN weights and runs inference with NumPy, which keeps deployment
+lightweight and reliable.
 
 ## Model summary
 
