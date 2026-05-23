@@ -1,0 +1,14 @@
+{
+  "model": "models/mnist_cnn.keras",
+  "dataset": "MNIST handwritten digits",
+  "training_examples": 60000,
+  "test_examples": 10000,
+  "epochs": 3,
+  "batch_size": 128,
+  "test_accuracy": 0.9890000224113464,
+  "test_loss": 0.02998441457748413,
+  "final_training_accuracy": 0.9791296124458313,
+  "final_validation_accuracy": 0.9901666641235352,
+  "deployment_weights": "models/mnist_cnn_weights.npz",
+  "sample_images": "data/mnist_samples.npz"
+}
