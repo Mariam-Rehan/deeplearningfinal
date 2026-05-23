@@ -62,7 +62,8 @@ For Streamlit Community Cloud:
 1. Push this repository to GitHub.
 2. Create a new Streamlit app.
 3. Select `app.py` as the entry point.
-4. Make sure `requirements.txt` is included.
+4. Make sure `requirements.txt` and `runtime.txt` are included. The runtime
+   file pins Python 3.11 for TensorFlow compatibility.
 5. If the committed model is unavailable, run `python train_model.py --epochs 3`
    locally and commit the generated `models/mnist_cnn.keras` and
    `models/metrics.json` files.
